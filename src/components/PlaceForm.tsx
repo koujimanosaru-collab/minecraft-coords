@@ -1,7 +1,11 @@
+import { useLiveQuery } from 'dexie-react-hooks';
 import { useState } from 'react';
+import { mapCategoryToDimension } from '../lib/categories';
 import { autoName, db, newId, savePlace } from '../lib/db';
 import { GROUP_LABELS, CATEGORY_GROUPS, DIMENSION_LABELS, type Category, type Dimension, type Place } from '../lib/types';
 import { CoordFields, EMPTY_DRAFT, coordsToDraft, draftToCoords, type CoordDraft } from './CoordInput';
+import { DimensionPicker } from './DimensionPicker';
+import { PhotoButton } from './PhotoReader';
 import { Sheet } from './Sheet';
 
 export interface PlaceFormInit {
@@ -14,6 +18,7 @@ export interface PlaceFormInit {
 interface PlaceFormProps {
   init: PlaceFormInit;
   worldId: string;
+  /** 新規なら今のタブ、編集なら地点のディメンション（記録画面の中で変えられる） */
   dimension: Dimension;
   categories: Category[];
   onClose: () => void;
@@ -22,7 +27,7 @@ interface PlaceFormProps {
 
 export function PlaceForm({ init, worldId, dimension, categories, onClose, onSaved }: PlaceFormProps) {
   const editing = init.place;
-  const [draft, setDraft] = useState<CoordDraft>(editing ? coordsToDraft(editing) : (init.draft ?? EMPTY_DRAFT));
+  const [dim, setDim] = useState<Dimension>(editing?.dimension ?? dimension);  const [draft, setDraft] = useState<CoordDraft>(editing ? coordsToDraft(editing) : (init.draft ?? EMPTY_DRAFT));
   const [categoryId, setCategoryId] = useState(editing?.categoryId ?? init.categoryId ?? '');
   const [name, setName] = useState(editing?.name ?? '');
   const [memo, setMemo] = useState(editing?.memo ?? '');
@@ -32,8 +37,25 @@ export function PlaceForm({ init, worldId, dimension, categories, onClose, onSav
   const [invalid, setInvalid] = useState<(keyof CoordDraft)[]>([]);
   const [saving, setSaving] = useState(false);
 
-  const dimCategories = categories.filter((c) => c.dimension === dimension && (!c.hidden || c.id === categoryId));
-  const selected = categories.find((c) => c.id === categoryId);
+  const dimCategories = categories.filter((c) => c.dimension === dim && (!c.hidden || c.id === categoryId));
+  const selected = categories.find((c) => c.id === categoryId && c.dimension === dim);
+
+  // 拠点にすると外れてしまう、選択中ディメンションの今の拠点
+  const otherHome = useLiveQuery(
+    () =>
+      db.places
+        .where('[worldId+dimension]')
+        .equals([worldId, dim])
+        .filter((p) => p.isHome && p.id !== editing?.id)
+        .first(),
+    [worldId, dim, editing?.id],
+  );
+
+  const changeDimension = (next: Dimension) => {
+    if (next === dim) return;
+    setCategoryId((id) => mapCategoryToDimension(categories, id, next));
+    setDim(next);
+  };
 
   const save = async () => {
     const { coords, invalid: bad } = draftToCoords(draft);
@@ -53,7 +75,7 @@ export function PlaceForm({ init, worldId, dimension, categories, onClose, onSav
       await savePlace({
         id: editing?.id ?? newId(),
         worldId,
-        dimension,
+        dimension: dim,
         categoryId: selected.id,
         name: finalName.slice(0, 100),
         ...coords,
@@ -63,7 +85,9 @@ export function PlaceForm({ init, worldId, dimension, categories, onClose, onSav
         createdAt: editing?.createdAt ?? now,
         updatedAt: now,
       });
-      onSaved(editing ? '更新しました' : `「${finalName}」を記録しました`);
+      const moved = editing ? editing.dimension !== dim : dim !== dimension;
+      const where = moved ? `${DIMENSION_LABELS[dim]}に` : '';
+      onSaved(editing ? (moved ? `${where}移しました` : '更新しました') : `「${finalName}」を${where}記録しました`);
     } catch {
       setErrors(['保存できませんでした。もう一度試してください']);
       setSaving(false);
@@ -78,7 +102,7 @@ export function PlaceForm({ init, worldId, dimension, categories, onClose, onSav
 
   return (
     <Sheet
-      title={editing ? '地点を編集' : `地点を記録（${DIMENSION_LABELS[dimension]}）`}
+      title={editing ? '地点を編集' : '地点を記録'}
       onClose={onClose}
       closeLabel="キャンセル"
       action={
@@ -96,7 +120,20 @@ export function PlaceForm({ init, worldId, dimension, categories, onClose, onSav
       )}
 
       <section className="form-section">
+        <h3>ディメンション</h3>
+        <DimensionPicker value={dim} onChange={changeDimension} />
+      </section>
+
+      <section className="form-section">
         <h3>座標</h3>
+        <PhotoButton
+          dimension={dim}
+          onResult={(coords, d) => {
+            setDraft(coordsToDraft(coords));
+            setInvalid([]);
+            changeDimension(d);
+          }}
+        />
         <CoordFields draft={draft} onChange={setDraft} invalid={invalid} />
       </section>
 
@@ -154,8 +191,13 @@ export function PlaceForm({ init, worldId, dimension, categories, onClose, onSav
         </label>
         <label className="toggle">
           <input type="checkbox" checked={isHome} onChange={(e) => setIsHome(e.target.checked)} />
-          <span>🏠 ここを{DIMENSION_LABELS[dimension]}の拠点にする</span>
+          <span>🏠 ここを{DIMENSION_LABELS[dim]}の拠点にする</span>
         </label>
+        {isHome && otherHome && (
+          <p className="home-warn">
+            保存すると、今の{DIMENSION_LABELS[dim]}の拠点「{otherHome.name}」は拠点ではなくなります。
+          </p>
+        )}
       </section>
 
       {editing && (

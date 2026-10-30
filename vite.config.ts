@@ -28,6 +28,15 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,png,svg}'],
+        // 読み取り用の大きなファイルは初回インストールに含めず、初めて使ったときにキャッシュする
+        globIgnores: ['tesseract/**'],
+        runtimeCaching: [
+          {
+            urlPattern: ({ url }) => url.pathname.includes('/tesseract/'),
+            handler: 'CacheFirst',
+            options: { cacheName: 'tesseract', expiration: { maxEntries: 10 } },
+          },
+        ],
       },
     }),
   ],

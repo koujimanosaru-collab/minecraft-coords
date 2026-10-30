@@ -418,3 +418,16 @@ textarea.text-input { resize: vertical; }
 .map3d-message { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; height: 100%; padding: 24px; text-align: center; color: var(--muted); }
 .map3d-message.overlay { position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) 85%, transparent); z-index: 3; color: var(--text); }
 .place-list.flush { padding: 0; }
+
+/* ---- 写真から読み取る ---- */
+.photo-btn { margin-bottom: 4px; }
+.photo-hint { margin: 0 0 8px; font-size: 14px; }
+.crop-area { position: relative; height: 58vh; border-radius: 12px; overflow: hidden; touch-action: none; background: #111; }
+.crop-area canvas { display: block; width: 100%; height: 100%; }
+.photo-actions { margin-top: 10px; align-items: center; }
+.photo-result { display: flex; flex-direction: column; gap: 10px; }
+.photo-result h3 { margin: 6px 0 0; font-size: 15px; }
+.photo-crop { width: 100%; border-radius: 10px; border: 1px solid var(--border); background: #111; }
+.photo-warn { margin: 0; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--want) 18%, var(--surface)); line-height: 1.6; }
+.dim-picker { padding: 0; }
+.home-warn { margin: 0; font-size: 13px; color: var(--danger); }

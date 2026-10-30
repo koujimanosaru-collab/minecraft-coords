@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CategoryManager } from './components/CategoryManager';
-import { EMPTY_DRAFT, draftToCoords, type CoordDraft } from './components/CoordInput';
+import { EMPTY_DRAFT, coordsToDraft, draftToCoords, type CoordDraft } from './components/CoordInput';
 import { FilterSheet } from './components/FilterSheet';
 import { HomeCard } from './components/HomeCard';
 import { MapView } from './components/MapView';
@@ -13,6 +13,7 @@ import { Settings } from './components/Settings';
 import { WorldSheet } from './components/WorldSheet';
 import { HOME_CATEGORY_ID } from './lib/categories';
 import { db, ensureSeed, getMeta } from './lib/db';
+import { hereKey as makeHereKey, setHere } from './lib/here';
 import { isStandalone, requestPersist, type PersistState } from './lib/device';
 import { DEFAULT_FILTER, SORT_LABELS, filterAndSort, type PlaceFilter, type SortKey } from './lib/places';
 import { DIMENSIONS, DIMENSION_LABELS, type Dimension, type World } from './lib/types';
@@ -105,7 +106,7 @@ export default function App() {
     return m;
   }, [places]);
   const home = places?.find((p) => p.isHome);
-  const hereKey = `${activeWorldId}/${dimension}`;
+  const hereKey = makeHereKey(activeWorldId, dimension);
   const hereDraft = heres[hereKey] ?? EMPTY_DRAFT;
   const herePos = draftToCoords(hereDraft).coords;
 
@@ -130,7 +131,16 @@ export default function App() {
           home={home}
           icon={home ? (categoryMap.get(home.categoryId)?.icon ?? '🏠') : '🏠'}
           here={hereDraft}
+          dimension={dimension}
           onHereChange={(d) => setHeres((h) => ({ ...h, [hereKey]: d }))}
+          onHerePhoto={(c, d) => {
+            // 保存先は選ばれたディメンションのキーで直接決める（タブ切替の前後で取り違えない）
+            setHeres((h) => setHere(h, activeWorldId, d, coordsToDraft(c)));
+            if (d !== dimension) {
+              setDimension(d);
+              toast(`${DIMENSION_LABELS[d]}に切り替えました`);
+            }
+          }}
           onRecordHere={() => setSheet({ type: 'form', init: { draft: hereDraft } })}
           onOpenHome={() => home && setSheet({ type: 'detail', id: home.id })}
           onAddHome={() =>

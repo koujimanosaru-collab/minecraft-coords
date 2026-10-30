@@ -126,3 +126,15 @@ export const HOME_CATEGORY_ID: Record<Dimension, string> = {
   nether: 'ne-home',
   end: 'en-home',
 };
+
+/**
+ * ディメンションを切り替えたときのカテゴリの引き継ぎ。
+ * 移動先の表示中カテゴリに同じ名前がちょうど 1 つあればその ID、なければ ''（選び直し）
+ */
+export function mapCategoryToDimension(categories: Category[], categoryId: string, to: Dimension): string {
+  const from = categories.find((c) => c.id === categoryId);
+  if (!from) return '';
+  if (from.dimension === to) return from.id;
+  const same = categories.filter((c) => c.dimension === to && !c.hidden && c.name === from.name);
+  return same.length === 1 ? same[0].id : '';
+}

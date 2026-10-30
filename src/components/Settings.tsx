@@ -21,6 +21,10 @@ const PERSIST_TEXT: Record<PersistState, string> = {
   error: '状態を確認できませんでした。こまめにバックアップしてください',
 };
 
+/** ホーム画面から起動していれば、未使用期間による削除の対象外（WebKit の方針）なので不安をあおらない説明にする */
+const STANDALONE_TEXT =
+  'ホーム画面から起動しているので、使わない期間があってもデータは消えません。iPhone の空き容量が少なくなったときや機種変更に備えて、ときどきバックアップしてください。';
+
 export function Settings({ persist, lastBackupAt, onClose, onImported, toast }: SettingsProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
@@ -69,7 +73,14 @@ export function Settings({ persist, lastBackupAt, onClose, onImported, toast }: 
           記録した地点は<strong>この iPhone の中だけ</strong>に保存されています。iPhone の変更や、まれに iOS
           の判断で消えることがあるので、ときどきバックアップしてください。
         </p>
-        <p className="muted">保護の状態：{persist ? PERSIST_TEXT[persist] : '確認中…'}</p>
+        <p className="muted">
+          保護の状態：
+          {!persist
+            ? '確認中…'
+            : persist !== 'persisted' && isStandalone()
+              ? STANDALONE_TEXT
+              : PERSIST_TEXT[persist]}
+        </p>
         <p className="muted">
           最後のバックアップ：{lastBackupAt ? new Date(lastBackupAt).toLocaleString('ja-JP') : 'まだありません'}
         </p>

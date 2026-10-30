@@ -1,21 +1,25 @@
 import { useState } from 'react';
 import { copyText } from '../lib/device';
 import { formatCoords, formatDistance, routeTo } from '../lib/geo';
-import type { Place } from '../lib/types';
+import type { Coords, Dimension, Place } from '../lib/types';
 import { CoordFields, draftToCoords, type CoordDraft } from './CoordInput';
+import { PhotoButton } from './PhotoReader';
 
 interface HomeCardProps {
   home: Place | undefined;
   icon: string;
   here: CoordDraft;
+  dimension: Dimension;
   onHereChange: (d: CoordDraft) => void;
+  /** 写真から読んだ今いる座標。ディメンションが今のタブと違うこともある */
+  onHerePhoto: (coords: Coords, dimension: Dimension) => void;
   onRecordHere: () => void;
   onOpenHome: () => void;
   onAddHome: () => void;
   toast: (msg: string) => void;
 }
 
-export function HomeCard({ home, icon, here, onHereChange, onRecordHere, onOpenHome, onAddHome, toast }: HomeCardProps) {
+export function HomeCard({ home, icon, here, dimension, onHereChange, onHerePhoto, onRecordHere, onOpenHome, onAddHome, toast }: HomeCardProps) {
   const [open, setOpen] = useState(false);
   const { coords: herePos } = draftToCoords(here);
   const route = home && herePos ? routeTo(herePos, home) : null;
@@ -56,6 +60,7 @@ export function HomeCard({ home, icon, here, onHereChange, onRecordHere, onOpenH
       </button>
       {open && (
         <div className="here-panel">
+          <PhotoButton dimension={dimension} onResult={onHerePhoto} />
           <CoordFields draft={here} onChange={onHereChange} />
           {home && herePos && route && (
             <p className="route">
