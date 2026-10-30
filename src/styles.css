@@ -191,7 +191,7 @@ button:disabled { opacity: 0.45; cursor: default; }
   font-size: 12px;
   pointer-events: none;
 }
-.compass { top: 8px; right: 8px; font-weight: 700; }
+.compass { top: 52px; right: 8px; font-weight: 700; }
 .scale-label { bottom: 8px; left: 8px; color: var(--muted); }
 .map-controls { position: absolute; right: 10px; bottom: 10px; display: flex; flex-direction: column; gap: 8px; }
 .map-controls button {
@@ -395,3 +395,26 @@ textarea.text-input { resize: vertical; }
   max-width: 90vw;
   text-align: center;
 }
+
+/* ---- 2D / 3D 切替と 3D マップ ---- */
+.map-area { position: relative; height: 100%; }
+.mode-switch {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+  z-index: 2;
+}
+.mode-switch button { border: none; background: none; padding: 7px 14px; font-size: 14px; font-weight: 700; min-height: 36px; color: var(--muted); }
+.mode-switch button.active { background: var(--accent); color: #fff; }
+.map3d-box { background: linear-gradient(var(--surface-2), var(--bg)); }
+.map3d-box canvas { display: block; touch-action: none; }
+.map3d-top { position: absolute; top: 8px; left: 8px; display: flex; gap: 6px; z-index: 2; }
+.map3d-empty { position: absolute; left: 0; right: 0; top: 45%; text-align: center; color: var(--muted); pointer-events: none; margin: 0; }
+.map3d-message { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; height: 100%; padding: 24px; text-align: center; color: var(--muted); }
+.map3d-message.overlay { position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) 85%, transparent); z-index: 3; color: var(--text); }
+.place-list.flush { padding: 0; }

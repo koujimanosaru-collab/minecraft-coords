@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CategoryManager } from './components/CategoryManager';
 import { EMPTY_DRAFT, draftToCoords, type CoordDraft } from './components/CoordInput';
 import { FilterSheet } from './components/FilterSheet';
@@ -7,6 +7,7 @@ import { HomeCard } from './components/HomeCard';
 import { MapView } from './components/MapView';
 import { PlaceDetail } from './components/PlaceDetail';
 import { PlaceForm, type PlaceFormInit } from './components/PlaceForm';
+import { PickSheet } from './components/PickSheet';
 import { PlaceList } from './components/PlaceList';
 import { Settings } from './components/Settings';
 import { WorldSheet } from './components/WorldSheet';
@@ -16,9 +17,13 @@ import { isStandalone, requestPersist, type PersistState } from './lib/device';
 import { DEFAULT_FILTER, SORT_LABELS, filterAndSort, type PlaceFilter, type SortKey } from './lib/places';
 import { DIMENSIONS, DIMENSION_LABELS, type Dimension, type World } from './lib/types';
 
+// 3D は three.js を含むので、開いたときに読み込む
+const MapView3D = lazy(() => import('./components/MapView3D'));
+
 type SheetState =
   | { type: 'form'; init: PlaceFormInit }
   | { type: 'detail'; id: string }
+  | { type: 'pick'; ids: string[] }
   | { type: 'world'; world?: World }
   | { type: 'filter' }
   | { type: 'categories' }
@@ -50,6 +55,7 @@ export default function App() {
     return DIMENSIONS.includes(d) ? d : 'overworld';
   });
   const [view, setView] = useState<'list' | 'map'>(() => (loadPref('view', 'list') === 'map' ? 'map' : 'list'));
+  const [mapMode, setMapMode] = useState<'2d' | '3d'>(() => (loadPref('mapMode', '2d') === '3d' ? '3d' : '2d'));
   const [filter, setFilter] = useState<PlaceFilter>(DEFAULT_FILTER);
   const [heres, setHeres] = useState<Record<string, CoordDraft>>({});
   const [sheet, setSheet] = useState<SheetState>(null);
@@ -84,6 +90,7 @@ export default function App() {
   useEffect(() => savePref('worldId', worldId), [worldId]);
   useEffect(() => savePref('dimension', dimension), [dimension]);
   useEffect(() => savePref('view', view), [view]);
+  useEffect(() => savePref('mapMode', mapMode), [mapMode]);
 
   const places = useLiveQuery(
     () => db.places.where('[worldId+dimension]').equals([activeWorldId, dimension]).toArray(),
@@ -182,14 +189,45 @@ export default function App() {
             onSelect={(p) => setSheet({ type: 'detail', id: p.id })}
           />
         ) : (
-          <MapView
-            key={hereKey}
-            places={shown}
-            categoryMap={categoryMap}
-            home={home}
-            here={herePos}
-            onSelect={(p) => setSheet({ type: 'detail', id: p.id })}
-          />
+          <div className="map-area">
+            {mapMode === '2d' ? (
+              <MapView
+                key={hereKey}
+                places={shown}
+                categoryMap={categoryMap}
+                home={home}
+                here={herePos}
+                onSelect={(p) => setSheet({ type: 'detail', id: p.id })}
+              />
+            ) : (
+              <Suspense fallback={<div className="map3d-message">3D を読み込み中…</div>}>
+                <MapView3D
+                  key={hereKey}
+                  places={shown}
+                  categoryMap={categoryMap}
+                  home={home}
+                  here={herePos}
+                  onSelect={(p) => setSheet({ type: 'detail', id: p.id })}
+                  onPickMany={(ps) => setSheet({ type: 'pick', ids: ps.map((p) => p.id) })}
+                  onFallback2D={() => setMapMode('2d')}
+                />
+              </Suspense>
+            )}
+            <div className="mode-switch" role="tablist" aria-label="マップの表示">
+              {(['2d', '3d'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="tab"
+                  aria-selected={mapMode === m}
+                  className={mapMode === m ? 'active' : ''}
+                  onClick={() => setMapMode(m)}
+                >
+                  {m.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
       </main>
 
@@ -270,6 +308,14 @@ export default function App() {
           onClose={close}
           onEdit={() => setSheet({ type: 'form', init: { place: detailPlace } })}
           toast={toast}
+        />
+      )}
+      {sheet?.type === 'pick' && (
+        <PickSheet
+          places={sheet.ids.flatMap((id) => places.find((p) => p.id === id) ?? [])}
+          categoryMap={categoryMap}
+          onPick={(p) => setSheet({ type: 'detail', id: p.id })}
+          onClose={close}
         />
       )}
       {sheet?.type === 'world' && (
