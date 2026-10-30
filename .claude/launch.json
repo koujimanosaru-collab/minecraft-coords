@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "preview", "--port", "4173", "--strictPort", "--host", "localhost"],
+      "port": 4173,
+      "url": "http://localhost:4173"
+    }
+  ]
+}
