@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie';
 import { builtinCategories } from './categories';
+import { MAX_SUB_CATEGORIES, normalizeSubCategories, type PlaceCategory } from './subcategories';
 import type { Category, Dimension, Place, World } from './types';
 
 export interface Meta {
@@ -61,6 +62,7 @@ export class CoordsDB extends Dexie {
   places!: EntityTable<Place, 'id'>;
   meta!: EntityTable<Meta, 'key'>;
   photos!: EntityTable<Photo, 'id'>;
+  placeCategories!: Dexie.Table<PlaceCategory, [string, string]>;
 
   constructor(name = 'minecraft-coords') {
     super(name);
@@ -73,6 +75,10 @@ export class CoordsDB extends Dexie {
     // 画像のテーブルを追加（Blob はインデックスに含めない）。既存のテーブルはそのまま
     this.version(2).stores({
       photos: 'id, placeId',
+    });
+    // 追加カテゴリのテーブルを追加（places の定義・データは変えない。旧版が地点を上書きしても追加は残る）
+    this.version(3).stores({
+      placeCategories: '[placeId+categoryId], placeId, categoryId',
     });
   }
 }
@@ -103,9 +109,10 @@ export async function addWorld(name: string, d: CoordsDB = db): Promise<string> 
 }
 
 export async function deleteWorld(id: string, d: CoordsDB = db): Promise<void> {
-  await d.transaction('rw', d.worlds, d.places, d.photos, async () => {
+  await d.transaction('rw', d.worlds, d.places, d.photos, d.placeCategories, async () => {
     const placeIds = (await d.places.where('worldId').equals(id).primaryKeys()) as string[];
     await d.photos.where('placeId').anyOf(placeIds).delete();
+    await d.placeCategories.where('placeId').anyOf(placeIds).delete();
     await d.places.where('worldId').equals(id).delete();
     await d.worlds.delete(id);
   });
@@ -113,8 +120,9 @@ export async function deleteWorld(id: string, d: CoordsDB = db): Promise<void> {
 
 /** 地点を削除する（画像も一緒に） */
 export async function deletePlace(id: string, d: CoordsDB = db): Promise<void> {
-  await d.transaction('rw', d.places, d.photos, async () => {
+  await d.transaction('rw', d.places, d.photos, d.placeCategories, async () => {
     await d.photos.where('placeId').equals(id).delete();
+    await d.placeCategories.where('placeId').equals(id).delete();
     await d.places.delete(id);
   });
 }
@@ -150,12 +158,28 @@ export async function autoName(worldId: string, category: Category, d: CoordsDB 
  * photo: 省略＝画像は変えない、null＝外す、データ＝付ける・差し替える（地点と同じトランザクション）。
  * 失敗したら地点も画像も変わらない
  */
-export async function savePlace(place: Place, d: CoordsDB = db, photo?: PhotoData | null): Promise<void> {
-  await d.transaction('rw', d.places, d.photos, async () => {
+export async function savePlace(
+  place: Place,
+  d: CoordsDB = db,
+  photo?: PhotoData | null,
+  /** 追加カテゴリ（省略＝変えない）。メインと同じ・ディメンション違い・重複・4 つ目以降は保存しない */
+  subCategoryIds?: string[],
+): Promise<void> {
+  await d.transaction('rw', d.places, d.photos, d.placeCategories, d.categories, async () => {
     if (place.isHome) {
       await clearHome(place.worldId, place.dimension, place.id, d);
     }
     await d.places.put({ ...place, updatedAt: Date.now() });
+    if (subCategoryIds !== undefined) {
+      const cats = await d.categories.bulkGet(subCategoryIds);
+      const ids: string[] = [];
+      for (const c of cats) {
+        if (!c || c.id === place.categoryId || c.dimension !== place.dimension || ids.includes(c.id)) continue;
+        if (ids.length < MAX_SUB_CATEGORIES) ids.push(c.id);
+      }
+      await d.placeCategories.where('placeId').equals(place.id).delete();
+      await d.placeCategories.bulkAdd(ids.map((categoryId, order) => ({ placeId: place.id, categoryId, order })));
+    }
     if (photo === undefined) return;
     const existing = await d.photos.where('placeId').equals(place.id).count();
     if (photo && existing === 0 && (await d.photos.count()) >= MAX_PHOTOS) throw new PhotoLimitError();
@@ -185,12 +209,35 @@ export async function setHome(place: Place, d: CoordsDB = db): Promise<void> {
 }
 
 export async function deleteCategory(id: string, d: CoordsDB = db): Promise<boolean> {
-  return d.transaction('rw', d.categories, d.places, async () => {
-    const used = await d.places.where('categoryId').equals(id).count();
+  return d.transaction('rw', d.categories, d.places, d.placeCategories, async () => {
     const cat = await d.categories.get(id);
-    if (used > 0 || !cat || cat.builtin) return false;
+    if (!cat || cat.builtin) return false;
+    if ((await d.places.where('categoryId').equals(id).count()) > 0) return false;
+    // 追加として使われているか（画面と同じ規則で有効な行だけを数える。旧版の操作で無効になった行は数えない）
+    const rows = await d.placeCategories.where('categoryId').equals(id).toArray();
+    const placeIds = [...new Set(rows.map((r) => r.placeId))];
+    const places = (await d.places.bulkGet(placeIds)).filter((p): p is Place => !!p);
+    const allRows = await d.placeCategories.where('placeId').anyOf(placeIds).toArray();
+    const categories = new Map((await d.categories.toArray()).map((c) => [c.id, c]));
+    const subs = normalizeSubCategories(allRows, new Map(places.map((p) => [p.id, p])), categories);
+    if ([...subs.values()].some((ids) => ids.includes(id))) return false;
+    await d.placeCategories.where('categoryId').equals(id).delete();
     await d.categories.delete(id);
     return true;
+  });
+}
+
+/**
+ * 存在しない地点・カテゴリを指す追加カテゴリの行を消す（旧版で地点・ワールド・カテゴリを削除したときの後始末）。
+ * それ以外の不整合（ディメンション違いなど）は読み込み時に normalizeSubCategories で無視する
+ */
+export async function cleanupPlaceCategories(d: CoordsDB = db): Promise<number> {
+  return d.transaction('rw', d.placeCategories, d.places, d.categories, async () => {
+    const placeIds = new Set((await d.places.toCollection().primaryKeys()) as string[]);
+    const catIds = new Set((await d.categories.toCollection().primaryKeys()) as string[]);
+    const stale = (await d.placeCategories.toArray()).filter((r) => !placeIds.has(r.placeId) || !catIds.has(r.categoryId));
+    await d.placeCategories.bulkDelete(stale.map((r) => [r.placeId, r.categoryId] as [string, string]));
+    return stale.length;
   });
 }
 

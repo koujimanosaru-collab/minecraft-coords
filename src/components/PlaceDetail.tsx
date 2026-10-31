@@ -11,6 +11,7 @@ import { Sheet } from './Sheet';
 interface PlaceDetailProps {
   place: Place;
   category: Category | undefined;
+  subCategories: Category[];
   home: Place | undefined;
   here: Coords | null;
   onClose: () => void;
@@ -18,7 +19,7 @@ interface PlaceDetailProps {
   toast: (msg: string) => void;
 }
 
-export function PlaceDetail({ place, category, home, here, onClose, onEdit, toast }: PlaceDetailProps) {
+export function PlaceDetail({ place, category, subCategories, home, here, onClose, onEdit, toast }: PlaceDetailProps) {
   const converted = convertDimension(place, place.dimension);
   const photo = useLiveQuery(() => db.photos.where('placeId').equals(place.id).first(), [place.id]);
   const photoUrl = useBlobUrl(photo?.full);
@@ -63,7 +64,9 @@ export function PlaceDetail({ place, category, home, here, onClose, onEdit, toas
             {!place.visited && <span className="badge want">☆ まだ行ってない</span>}
           </h3>
           <p className="muted">
-            {category?.name ?? '不明なカテゴリ'} ・ {DIMENSION_LABELS[place.dimension]}
+            {category?.name ?? '不明なカテゴリ'}
+            {subCategories.length > 0 && <>（メイン）・{subCategories.map((c) => `${c.icon} ${c.name}`).join('・')}</>}
+            {' '}・ {DIMENSION_LABELS[place.dimension]}
           </p>
         </div>
       </div>

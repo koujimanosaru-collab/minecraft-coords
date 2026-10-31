@@ -37,7 +37,7 @@ afterEach(async () => {
   await d.delete();
 });
 
-describe('画像付きバックアップ（schemaVersion 2）', () => {
+describe('画像付きバックアップ（schemaVersion 2 以上）', () => {
   it('画像を含めて書き出し→全削除→復元で一致', async () => {
     await addWithPhoto();
     await addWithPhoto(960, 1280);

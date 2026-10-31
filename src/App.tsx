@@ -12,10 +12,11 @@ import { PlaceList } from './components/PlaceList';
 import { Settings } from './components/Settings';
 import { WorldSheet } from './components/WorldSheet';
 import { HOME_CATEGORY_ID } from './lib/categories';
-import { SELFTEST, db, ensureSeed, getMeta } from './lib/db';
+import { SELFTEST, cleanupPlaceCategories, db, ensureSeed, getMeta } from './lib/db';
 import { hereKey as makeHereKey, setHere } from './lib/here';
 import { isStandalone, requestPersist, type PersistState } from './lib/device';
-import { DEFAULT_FILTER, SORT_LABELS, filterAndSort, type PlaceFilter, type SortKey } from './lib/places';
+import { DEFAULT_FILTER, SORT_LABELS, countByCategory, filterAndSort, type PlaceFilter, type SortKey } from './lib/places';
+import { normalizeSubCategories } from './lib/subcategories';
 import { DIMENSIONS, DIMENSION_LABELS, type Dimension, type World } from './lib/types';
 
 // 3D は three.js を含むので、開いたときに読み込む
@@ -72,6 +73,8 @@ export default function App() {
 
   useEffect(() => {
     ensureSeed()
+      // 旧版で地点・カテゴリを削除したときに残った追加カテゴリの行を掃除する
+      .then(() => cleanupPlaceCategories())
       .catch(() => toast('データを開けませんでした'))
       .finally(() => setReady(true));
     requestPersist().then(setPersist);
@@ -105,11 +108,13 @@ export default function App() {
 
   const categoryMap = useMemo(() => new Map((categories ?? []).map((c) => [c.id, c])), [categories]);
   const dimCategories = useMemo(() => (categories ?? []).filter((c) => c.dimension === dimension), [categories, dimension]);
-  const counts = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const p of places ?? []) m.set(p.categoryId, (m.get(p.categoryId) ?? 0) + 1);
-    return m;
-  }, [places]);
+  // 追加カテゴリ（必ず normalizeSubCategories で整えて使う）
+  const placeCategoryRows = useLiveQuery(() => db.placeCategories.toArray(), []);
+  const subs = useMemo(
+    () => normalizeSubCategories(placeCategoryRows ?? [], new Map((places ?? []).map((p) => [p.id, p])), categoryMap),
+    [placeCategoryRows, places, categoryMap],
+  );
+  const counts = useMemo(() => countByCategory(places ?? [], subs), [places, subs]);
   const home = places?.find((p) => p.isHome);
   const hereKey = makeHereKey(activeWorldId, dimension);
   const hereDraft = heres[hereKey] ?? EMPTY_DRAFT;
@@ -118,10 +123,11 @@ export default function App() {
   // ディメンションが変わったらカテゴリの絞り込みは外す
   useEffect(() => setFilter((f) => ({ ...f, categoryIds: [] })), [dimension]);
 
-  const shown = useMemo(() => filterAndSort(places ?? [], filter, home ?? null), [places, filter, home]);
+  const shown = useMemo(() => filterAndSort(places ?? [], filter, home ?? null, subs), [places, filter, home, subs]);
   const filtered = filter.categoryIds.length > 0 || filter.onlyUnvisited;
 
-  if (!ready || !worlds || !categories || !places || !world) {
+  // 追加カテゴリを読み込み終わるまで待つ（途中で編集を開くと、追加が空のまま保存されてしまうため）
+  if (!ready || !worlds || !categories || !places || !world || !placeCategoryRows) {
     return <div className="loading">読み込み中…</div>;
   }
 
@@ -203,6 +209,7 @@ export default function App() {
             home={home}
             filtered={filtered}
             thumbs={thumbs ?? new Map()}
+            subs={subs}
             onSelect={(p) => setSheet({ type: 'detail', id: p.id })}
           />
         ) : (
@@ -320,10 +327,11 @@ export default function App() {
         <PlaceDetail
           place={detailPlace}
           category={categoryMap.get(detailPlace.categoryId)}
+          subCategories={(subs.get(detailPlace.id) ?? []).flatMap((id) => categoryMap.get(id) ?? [])}
           home={home}
           here={herePos}
           onClose={close}
-          onEdit={() => setSheet({ type: 'form', init: { place: detailPlace } })}
+          onEdit={() => setSheet({ type: 'form', init: { place: detailPlace, subCategoryIds: subs.get(detailPlace.id) ?? [] } })}
           toast={toast}
         />
       )}

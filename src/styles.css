@@ -461,3 +461,16 @@ textarea.text-input { resize: vertical; }
 .photo-zoom-hint { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 16px); color: #ddd; font-size: 13px; }
 .selftest-banner { background: #d39b00; color: #000; text-align: center; font-size: 13px; font-weight: 700; padding: calc(env(safe-area-inset-top) + 4px) 8px 4px; }
 .selftest-banner + .top { padding-top: 8px; }
+
+/* ---- 複数カテゴリ ---- */
+.cat-help { margin: 0; font-size: 13px; }
+.cat-chosen { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.cat-chosen li { display: flex; align-items: center; gap: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 6px 8px; }
+.cat-chosen li span { flex: 1; }
+.cat-chosen li.main { border-color: var(--accent); }
+.cat-chosen small { color: var(--muted); margin-left: 4px; }
+.cat-note { margin: 0; color: var(--danger); font-size: 13px; }
+.cat-tile { position: relative; }
+.cat-tile.selected-sub { border-color: var(--accent); border-style: dashed; background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+.cat-badge { position: absolute; top: 2px; right: 2px; font-size: 9px; font-weight: 700; padding: 0 4px; border-radius: 4px; background: var(--accent); color: #fff; }
+.sub-icon { margin-left: 4px; font-size: 14px; }

@@ -9,10 +9,12 @@ interface PlaceListProps {
   filtered: boolean;
   /** 地点 ID → 一覧用の小さい画像 */
   thumbs: Map<string, Blob>;
+  /** 地点 ID → 追加カテゴリ（整えたもの） */
+  subs: Map<string, string[]>;
   onSelect: (p: Place) => void;
 }
 
-export function PlaceList({ places, categoryMap, home, filtered, thumbs, onSelect }: PlaceListProps) {
+export function PlaceList({ places, categoryMap, home, filtered, thumbs, subs, onSelect }: PlaceListProps) {
   if (places.length === 0) {
     return (
       <p className="empty-state">
@@ -33,6 +35,11 @@ export function PlaceList({ places, categoryMap, home, filtered, thumbs, onSelec
               <span className="place-main">
                 <span className="place-name">
                   {p.name}
+                  {(subs.get(p.id) ?? []).map((id) => (
+                    <span key={id} className="sub-icon" title={categoryMap.get(id)?.name}>
+                      {categoryMap.get(id)?.icon}
+                    </span>
+                  ))}
                   {p.isHome && <span className="badge home">拠点</span>}
                   {!p.visited && <span className="badge want">☆</span>}
                 </span>

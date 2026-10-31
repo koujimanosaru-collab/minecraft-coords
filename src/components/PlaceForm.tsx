@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useState } from 'react';
-import { mapCategoryToDimension } from '../lib/categories';
+import { makeMain, mapSelection, removeCategory, tapCategory, type CategorySelection } from '../lib/subcategories';
 import { PhotoLimitError, autoName, db, deletePlace, isQuotaError, newId, savePlace, type PhotoData } from '../lib/db';
 import { useBlobUrl } from '../lib/useBlobUrl';
 import { GROUP_LABELS, CATEGORY_GROUPS, DIMENSION_LABELS, type Category, type Dimension, type Place } from '../lib/types';
@@ -14,6 +14,8 @@ export interface PlaceFormInit {
   place?: Place;
   draft?: CoordDraft;
   categoryId?: string;
+  /** 編集時の追加カテゴリ（整えたもの） */
+  subCategoryIds?: string[];
   isHome?: boolean;
 }
 
@@ -31,7 +33,13 @@ export function PlaceForm({ init, worldId, dimension, categories, onClose, onSav
   const editing = init.place;
   const [dim, setDim] = useState<Dimension>(editing?.dimension ?? dimension);
   const [draft, setDraft] = useState<CoordDraft>(editing ? coordsToDraft(editing) : (init.draft ?? EMPTY_DRAFT));
-  const [categoryId, setCategoryId] = useState(editing?.categoryId ?? init.categoryId ?? '');
+  // カテゴリ: メイン 1 つ＋追加 3 つまで
+  const [catSel, setCatSel] = useState<CategorySelection>({
+    main: editing?.categoryId ?? init.categoryId ?? '',
+    subs: init.subCategoryIds ?? [],
+  });
+  const [catNote, setCatNote] = useState('');
+  const categoryId = catSel.main;
   const [name, setName] = useState(editing?.name ?? '');
   const [memo, setMemo] = useState(editing?.memo ?? '');
   const [wantToGo, setWantToGo] = useState(editing ? !editing.visited : false);
@@ -45,7 +53,10 @@ export function PlaceForm({ init, worldId, dimension, categories, onClose, onSav
   const shownThumb = photoChange === undefined ? savedPhoto?.thumb : (photoChange?.thumb ?? null);
   const thumbUrl = useBlobUrl(shownThumb);
 
-  const dimCategories = categories.filter((c) => c.dimension === dim && (!c.hidden || c.id === categoryId));
+  // 選んでいるもの（メイン・追加）は、非表示でも選択肢に残して外せるようにする
+  const isSelected = (id: string) => id === catSel.main || catSel.subs.includes(id);
+  const dimCategories = categories.filter((c) => c.dimension === dim && (!c.hidden || isSelected(c.id)));
+  const subCategories = catSel.subs.flatMap((id) => categories.find((c) => c.id === id && c.dimension === dim) ?? []);
   const selected = categories.find((c) => c.id === categoryId && c.dimension === dim);
 
   // 拠点にすると外れてしまう、選択中ディメンションの今の拠点
@@ -61,7 +72,8 @@ export function PlaceForm({ init, worldId, dimension, categories, onClose, onSav
 
   const changeDimension = (next: Dimension) => {
     if (next === dim) return;
-    setCategoryId((id) => mapCategoryToDimension(categories, id, next));
+    setCatSel((sel) => mapSelection(sel, categories, next));
+    setCatNote('');
     setDim(next);
   };
 
@@ -96,6 +108,7 @@ export function PlaceForm({ init, worldId, dimension, categories, onClose, onSav
         },
         db,
         photoChange,
+        subCategories.map((c) => c.id),
       );
       const moved = editing ? editing.dimension !== dim : dim !== dimension;
       const where = moved ? `${DIMENSION_LABELS[dim]}に` : '';
@@ -176,7 +189,39 @@ export function PlaceForm({ init, worldId, dimension, categories, onClose, onSav
       </section>
 
       <section className="form-section">
-        <h3>カテゴリ{selected && <span className="selected-cat">：{selected.icon} {selected.name}</span>}</h3>
+        <h3>カテゴリ</h3>
+        <p className="muted cat-help">1 つ目がメイン（マップのアイコン）、2 つ目からは追加（3 つまで）。もう一度押すと外れます。</p>
+        {(selected || subCategories.length > 0) && (
+          <ul className="cat-chosen">
+            {[...(selected ? [selected] : []), ...subCategories].map((c) => {
+              const main = c.id === catSel.main;
+              return (
+                <li key={c.id} className={main ? 'main' : ''}>
+                  <span>
+                    {c.icon} {c.name}
+                    <small>{main ? '（メイン）' : '（追加）'}</small>
+                  </span>
+                  {!main && (
+                    <button type="button" className="chip small" onClick={() => setCatSel((sel) => makeMain(sel, c.id))}>
+                      メインにする
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="chip small"
+                    onClick={() => {
+                      setCatSel((sel) => removeCategory(sel, c.id));
+                      setCatNote('');
+                    }}
+                  >
+                    外す
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {catNote && <p className="cat-note">{catNote}</p>}
         {CATEGORY_GROUPS.map((g) => {
           const list = dimCategories.filter((c) => c.group === g);
           if (list.length === 0) return null;
@@ -184,18 +229,27 @@ export function PlaceForm({ init, worldId, dimension, categories, onClose, onSav
             <div key={g} className="cat-group">
               <h4>{GROUP_LABELS[g]}</h4>
               <div className="cat-grid">
-                {list.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className={`cat-tile${c.id === categoryId ? ' selected' : ''}`}
-                    onClick={() => setCategoryId(c.id)}
-                    aria-pressed={c.id === categoryId}
-                  >
-                    <span className="cat-icon">{c.icon}</span>
-                    <span className="cat-name">{c.name}</span>
-                  </button>
-                ))}
+                {list.map((c) => {
+                  const main = c.id === catSel.main;
+                  const sub = catSel.subs.includes(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className={`cat-tile${main ? ' selected' : sub ? ' selected-sub' : ''}`}
+                      onClick={() => {
+                        const r = tapCategory(catSel, c.id);
+                        setCatSel(r.sel);
+                        setCatNote(r.full ? '追加は 3 つまでです' : '');
+                      }}
+                      aria-pressed={main || sub}
+                    >
+                      {(main || sub) && <span className="cat-badge">{main ? 'メイン' : '追加'}</span>}
+                      <span className="cat-icon">{c.icon}</span>
+                      <span className="cat-name">{c.name}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           );
