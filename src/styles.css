@@ -66,7 +66,12 @@ button:disabled { opacity: 0.45; cursor: default; }
   padding: calc(env(safe-area-inset-top) + 8px) 12px 6px;
   background: var(--accent);
   color: #fff;
+  image-rendering: pixelated;
 }
+.dim-overworld .top { background: linear-gradient(rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0.3)), url('/textures/overworld.png') 0 0 / 48px 48px; }
+.dim-nether .top { background: linear-gradient(rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0.3)), url('/textures/nether.png') 0 0 / 48px 48px; }
+.dim-end .top { background: linear-gradient(rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.15)), url('/textures/end.png') 0 0 / 48px 48px; }
+.top .home-coords, .top .home-label, .top .route, .top .here-toggle { text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6); }
 .home-card { display: flex; flex-direction: column; gap: 6px; }
 .home-main { display: flex; align-items: center; gap: 8px; }
 .home-main.empty { justify-content: space-between; padding: 8px 0; font-weight: 600; }
@@ -237,9 +242,18 @@ button:disabled { opacity: 0.45; cursor: default; }
   min-height: 36px;
 }
 .dim-btn.active { color: #fff; font-weight: 700; border-color: transparent; }
-.dim-btn-overworld.active { background: #3f7d34; }
-.dim-btn-nether.active { background: #b03a2e; }
-.dim-btn-end.active { background: #6d4fa3; }
+/* ディメンションごとの模様（オリジナルのドット絵 16×16 を 3 倍で並べる）。文字が読めるよう色を重ねる */
+.dim-btn-overworld { --tile: url('/textures/overworld.png'); }
+.dim-btn-nether { --tile: url('/textures/nether.png'); }
+.dim-btn-end { --tile: url('/textures/end.png'); }
+.dim-btn {
+  background: linear-gradient(rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.72)), var(--tile) 0 0 / 48px 48px;
+  image-rendering: pixelated;
+}
+.dim-btn.active { background: linear-gradient(rgba(0, 0, 0, 0.58), rgba(0, 0, 0, 0.58)), var(--tile) 0 0 / 48px 48px; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.6); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); }
+@media (prefers-color-scheme: dark) {
+  .dim-btn:not(.active) { background: linear-gradient(rgba(0, 0, 0, 0.62), rgba(0, 0, 0, 0.62)), var(--tile) 0 0 / 48px 48px; }
+}
 .nav-bar { display: grid; grid-template-columns: repeat(5, 1fr); align-items: center; padding: 2px 4px 4px; }
 .nav-bar button {
   background: none;
@@ -431,3 +445,5 @@ textarea.text-input { resize: vertical; }
 .photo-warn { margin: 0; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--want) 18%, var(--surface)); line-height: 1.6; }
 .dim-picker { padding: 0; }
 .home-warn { margin: 0; font-size: 13px; color: var(--danger); }
+
+.empty-disclaimer { display: block; margin-top: 24px; font-size: 12px; }

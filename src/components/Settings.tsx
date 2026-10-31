@@ -67,6 +67,15 @@ export function Settings({ persist, lastBackupAt, onClose, onImported, toast }: 
 
   return (
     <Sheet title="設定・バックアップ" onClose={onClose}>
+      <section className="form-section disclaimer">
+        <h3>このアプリについて</h3>
+        <p>
+          Minecraft の公式アプリではありません。Mojang Studios・Microsoft とは関係ありません。
+          <br />
+          NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.
+        </p>
+      </section>
+
       <section className="form-section">
         <h3>データの保存場所</h3>
         <p>

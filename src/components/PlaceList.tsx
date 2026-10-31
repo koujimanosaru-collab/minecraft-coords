@@ -14,6 +14,7 @@ export function PlaceList({ places, categoryMap, home, filtered, onSelect }: Pla
     return (
       <p className="empty-state">
         {filtered ? '条件に合う地点がありません' : 'まだ地点がありません。\n下の「＋」で記録しよう！'}
+        {!filtered && <small className="empty-disclaimer">Minecraft の公式アプリではありません（Mojang・Microsoft とは無関係です）</small>}
       </p>
     );
   }
