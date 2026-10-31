@@ -97,8 +97,8 @@ function PhotoReader({
   const [rect, setRect] = useState<Rect | null>(null);
   const [draft, setDraft] = useState<CoordDraft>(EMPTY_DRAFT);
   const [dim, setDim] = useState<Dimension>(dimension);
-  // 部屋や家族が写ることがあるので、初期値はオフ
-  const [attach, setAttach] = useState(false);
+  // いつも画像を付けるというユーザーの判断で初期値はオン。部屋や家族の写り込みは、次の保存範囲を選ぶ画面で確かめられる
+  const [attach, setAttach] = useState(true);
 
   useEffect(() => {
     const run = ++runRef.current;
@@ -225,7 +225,8 @@ function PhotoReader({
               disabled={!confirmed}
               onClick={() => {
                 if (!confirmed) return;
-                if (attach) setStep({ kind: 'attach', coords: confirmed });
+                // 画像にできるのは記録画面から開いたときだけ（拠点カードの「今いる座標」では座標だけを返す）
+                if (allowAttach && attach) setStep({ kind: 'attach', coords: confirmed });
                 else onResult(confirmed, dim);
               }}
             >
