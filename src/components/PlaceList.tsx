@@ -1,4 +1,5 @@
 import { routeTo } from '../lib/geo';
+import { useBlobUrl } from '../lib/useBlobUrl';
 import type { Category, Place } from '../lib/types';
 
 interface PlaceListProps {
@@ -6,10 +7,12 @@ interface PlaceListProps {
   categoryMap: Map<string, Category>;
   home: Place | undefined;
   filtered: boolean;
+  /** 地点 ID → 一覧用の小さい画像 */
+  thumbs: Map<string, Blob>;
   onSelect: (p: Place) => void;
 }
 
-export function PlaceList({ places, categoryMap, home, filtered, onSelect }: PlaceListProps) {
+export function PlaceList({ places, categoryMap, home, filtered, thumbs, onSelect }: PlaceListProps) {
   if (places.length === 0) {
     return (
       <p className="empty-state">
@@ -26,7 +29,7 @@ export function PlaceList({ places, categoryMap, home, filtered, onSelect }: Pla
         return (
           <li key={p.id}>
             <button type="button" className="place-row" onClick={() => onSelect(p)}>
-              <span className="place-icon">{cat?.icon ?? '❓'}</span>
+              <PlaceIcon icon={cat?.icon ?? '❓'} thumb={thumbs.get(p.id)} />
               <span className="place-main">
                 <span className="place-name">
                   {p.name}
@@ -49,5 +52,17 @@ export function PlaceList({ places, categoryMap, home, filtered, onSelect }: Pla
         );
       })}
     </ul>
+  );
+}
+
+/** 画像があれば小さい画像（角にカテゴリのアイコン）、なければカテゴリのアイコン */
+function PlaceIcon({ icon, thumb }: { icon: string; thumb: Blob | undefined }) {
+  const url = useBlobUrl(thumb);
+  if (!url) return <span className="place-icon">{icon}</span>;
+  return (
+    <span className="place-icon with-thumb">
+      <img src={url} alt="" />
+      <span className="place-icon-badge">{icon}</span>
+    </span>
   );
 }

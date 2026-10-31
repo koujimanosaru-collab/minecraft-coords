@@ -1,28 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import {
-  ReadError,
-  cropPreview,
-  loadPhoto,
-  prepareWorker,
-  readCoords,
-  releaseCanvas,
-  terminateWorker,
-  type Rect,
-} from '../lib/ocr/reader';
+import type { PhotoData } from '../lib/db';
+import { IMAGE_INPUT_TEXT, ImageInputError, loadPhoto, releaseCanvas } from '../lib/image-input';
+import { ReadError, cropPreview, prepareWorker, readCoords, terminateWorker } from '../lib/ocr/reader';
+import type { Rect } from '../lib/photo';
 import type { Coords, Dimension } from '../lib/types';
 import { CoordFields, coordsToDraft, draftToCoords, EMPTY_DRAFT, type CoordDraft } from './CoordInput';
+import { CropArea } from './CropArea';
 import { DimensionPicker } from './DimensionPicker';
+import { AttachCrop } from './PlaceImagePicker';
 import { Sheet } from './Sheet';
 
 /** 「📷 写真から読み取る」ボタン。押すとカメラ／写真の選択を出し、選んだら読み取り画面を開く */
 export function PhotoButton({
   dimension,
   onResult,
+  allowAttach = false,
   label = '📷 写真から読み取る',
 }: {
   dimension: Dimension;
-  onResult: (coords: Coords, dimension: Dimension) => void;
+  /** photo は「この写真を地点の画像にする」を選んだときだけ渡る */
+  onResult: (coords: Coords, dimension: Dimension, photo?: PhotoData) => void;
+  /** 記録画面から開いたときだけ、写真を地点の画像にできる */
+  allowAttach?: boolean;
   label?: string;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -49,10 +49,11 @@ export function PhotoButton({
           <PhotoReader
             file={file}
             dimension={dimension}
+            allowAttach={allowAttach}
             onClose={() => setFile(null)}
-            onResult={(c, d) => {
+            onResult={(c, d, photo) => {
               setFile(null);
-              onResult(c, d);
+              onResult(c, d, photo);
             }}
           />,
           document.querySelector('.app') ?? document.body,
@@ -66,10 +67,10 @@ type Step =
   | { kind: 'crop' }
   | { kind: 'reading'; status: string }
   | { kind: 'confirm'; preview: string; found: boolean }
+  | { kind: 'attach'; coords: Coords }
   | { kind: 'error'; message: string; canRetry: boolean };
 
 const ERROR_TEXT: Record<ReadError['kind'], string> = {
-  decode: '写真を開けませんでした。別の写真で試してください',
   offline: '初めて使うときはインターネット接続が必要です（読み取り用のデータをダウンロードします）',
   init: '読み取りの準備に失敗しました。もう一度試してください',
   recognize: '読み取り中にエラーが起きました。もう一度試してください',
@@ -80,13 +81,15 @@ const ERROR_TEXT: Record<ReadError['kind'], string> = {
 function PhotoReader({
   file,
   dimension,
+  allowAttach,
   onClose,
   onResult,
 }: {
   file: File;
   dimension: Dimension;
+  allowAttach: boolean;
   onClose: () => void;
-  onResult: (coords: Coords, dimension: Dimension) => void;
+  onResult: (coords: Coords, dimension: Dimension, photo?: PhotoData) => void;
 }) {
   const photoRef = useRef<HTMLCanvasElement | null>(null);
   const runRef = useRef(0); // 実行ごとの番号。中断・閉じた後に届いた結果は捨てる
@@ -94,6 +97,8 @@ function PhotoReader({
   const [rect, setRect] = useState<Rect | null>(null);
   const [draft, setDraft] = useState<CoordDraft>(EMPTY_DRAFT);
   const [dim, setDim] = useState<Dimension>(dimension);
+  // 部屋や家族が写ることがあるので、初期値はオフ
+  const [attach, setAttach] = useState(false);
 
   useEffect(() => {
     const run = ++runRef.current;
@@ -103,7 +108,11 @@ function PhotoReader({
         photoRef.current = c;
         setStep({ kind: 'crop' });
       })
-      .catch(() => run === runRef.current && setStep({ kind: 'error', message: ERROR_TEXT.decode, canRetry: false }));
+      .catch(
+        (e) =>
+          run === runRef.current &&
+          setStep({ kind: 'error', message: IMAGE_INPUT_TEXT[e instanceof ImageInputError ? e.kind : 'decode'], canRetry: false }),
+      );
     // 初回のダウンロードを先に始めておく（失敗は読み取り時に表示する）
     prepareWorker().catch(() => {});
     return () => {
@@ -200,156 +209,39 @@ function PhotoReader({
           <h3>どのディメンションの座標？</h3>
           <DimensionPicker value={dim} onChange={setDim} />
           <CoordFields draft={draft} onChange={setDraft} invalid={draft === EMPTY_DRAFT ? [] : invalid} />
+          {allowAttach && (
+            <label className="toggle">
+              <input type="checkbox" checked={attach} onChange={(e) => setAttach(e.target.checked)} />
+              <span>この写真を地点の画像にする（次の画面で保存する範囲を選べます）</span>
+            </label>
+          )}
           <div className="row photo-actions">
             <button type="button" className="chip" onClick={() => setStep({ kind: 'crop' })}>
               範囲をやり直す
             </button>
-            <button type="button" className="chip primary" disabled={!confirmed} onClick={() => confirmed && onResult(confirmed, dim)}>
+            <button
+              type="button"
+              className="chip primary"
+              disabled={!confirmed}
+              onClick={() => {
+                if (!confirmed) return;
+                if (attach) setStep({ kind: 'attach', coords: confirmed });
+                else onResult(confirmed, dim);
+              }}
+            >
               入力欄に入れる
             </button>
           </div>
         </div>
       )}
+
+      {step.kind === 'attach' && photoRef.current && (
+        <AttachCrop
+          photo={photoRef.current}
+          onDone={(photo) => onResult(step.coords, dim, photo)}
+          onSkip={() => onResult(step.coords, dim)}
+        />
+      )}
     </Sheet>
-  );
-}
-
-/** 写真を表示し、1 本指で範囲を囲む（角の近くから始めると角を動かす）。2 本指で拡大・移動 */
-function CropArea({ photo, rect, onRect }: { photo: HTMLCanvasElement; rect: Rect | null; onRect: (r: Rect | null) => void }) {
-  const boxRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [view, setView] = useState({ scale: 1, tx: 0, ty: 0 }); // 表示倍率（画面px / 写真px）と平行移動
-  const pointers = useRef(new Map<number, { x: number; y: number }>());
-  const drag = useRef<{ mode: 'draw' | 'corner'; ax: number; ay: number } | null>(null);
-  const pinch = useRef<{ dist: number; mx: number; my: number } | null>(null);
-
-  // 最初は写真の幅を画面の幅に合わせる
-  useEffect(() => {
-    const box = boxRef.current!;
-    const fit = box.clientWidth / photo.width;
-    setView({ scale: fit, tx: 0, ty: 0 });
-  }, [photo]);
-
-  useEffect(() => {
-    const c = canvasRef.current;
-    const box = boxRef.current;
-    if (!c || !box) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const w = box.clientWidth;
-    const h = box.clientHeight;
-    c.width = w * dpr;
-    c.height = h * dpr;
-    const g = c.getContext('2d')!;
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.fillStyle = '#111';
-    g.fillRect(0, 0, w, h);
-    g.imageSmoothingQuality = 'high';
-    g.drawImage(photo, view.tx, view.ty, photo.width * view.scale, photo.height * view.scale);
-    if (rect) {
-      const x = view.tx + rect.x * view.scale;
-      const y = view.ty + rect.y * view.scale;
-      const rw = rect.w * view.scale;
-      const rh = rect.h * view.scale;
-      g.fillStyle = 'rgba(0,0,0,0.45)';
-      g.fillRect(0, 0, w, y);
-      g.fillRect(0, y + rh, w, h - y - rh);
-      g.fillRect(0, y, x, rh);
-      g.fillRect(x + rw, y, w - x - rw, rh);
-      g.strokeStyle = '#ffd400';
-      g.lineWidth = 2;
-      g.strokeRect(x, y, rw, rh);
-      g.fillStyle = '#ffd400';
-      for (const [cx, cy] of [[x, y], [x + rw, y], [x, y + rh], [x + rw, y + rh]]) g.fillRect(cx - 5, cy - 5, 10, 10);
-    }
-  }, [photo, view, rect]);
-
-  useEffect(() => {
-    const c = canvasRef.current;
-    return () => releaseCanvas(c);
-  }, []);
-
-  const local = (e: React.PointerEvent) => {
-    const r = boxRef.current!.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
-  };
-  const toPhoto = (p: { x: number; y: number }) => ({
-    x: Math.min(photo.width, Math.max(0, (p.x - view.tx) / view.scale)),
-    y: Math.min(photo.height, Math.max(0, (p.y - view.ty) / view.scale)),
-  });
-  const rectFrom = (a: { x: number; y: number }, b: { x: number; y: number }): Rect => ({
-    x: Math.min(a.x, b.x),
-    y: Math.min(a.y, b.y),
-    w: Math.abs(a.x - b.x),
-    h: Math.abs(a.y - b.y),
-  });
-
-  const onDown = (e: React.PointerEvent) => {
-    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
-    pointers.current.set(e.pointerId, local(e));
-    if (pointers.current.size === 2) {
-      drag.current = null;
-      const [a, b] = [...pointers.current.values()];
-      pinch.current = { dist: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
-      return;
-    }
-    const p = local(e);
-    // 既存の範囲の角の近く（24px 以内）なら、反対側の角を固定して動かす
-    if (rect) {
-      const corners = [
-        [rect.x, rect.y, rect.x + rect.w, rect.y + rect.h],
-        [rect.x + rect.w, rect.y, rect.x, rect.y + rect.h],
-        [rect.x, rect.y + rect.h, rect.x + rect.w, rect.y],
-        [rect.x + rect.w, rect.y + rect.h, rect.x, rect.y],
-      ];
-      for (const [cx, cy, ox, oy] of corners) {
-        if (Math.hypot(view.tx + cx * view.scale - p.x, view.ty + cy * view.scale - p.y) < 24) {
-          drag.current = { mode: 'corner', ax: ox, ay: oy };
-          return;
-        }
-      }
-    }
-    const a = toPhoto(p);
-    drag.current = { mode: 'draw', ax: a.x, ay: a.y };
-  };
-
-  const onMove = (e: React.PointerEvent) => {
-    if (!pointers.current.has(e.pointerId)) return;
-    pointers.current.set(e.pointerId, local(e));
-    if (pointers.current.size === 2 && pinch.current) {
-      const [a, b] = [...pointers.current.values()];
-      const dist = Math.hypot(a.x - b.x, a.y - b.y);
-      const mx = (a.x + b.x) / 2;
-      const my = (a.y + b.y) / 2;
-      const k = dist / pinch.current.dist;
-      const prev = pinch.current;
-      setView((v) => {
-        const fit = boxRef.current!.clientWidth / photo.width;
-        const scale = Math.min(fit * 8, Math.max(fit, v.scale * k));
-        const kk = scale / v.scale;
-        return { scale, tx: mx - (prev.mx - v.tx) * kk, ty: my - (prev.my - v.ty) * kk };
-      });
-      pinch.current = { dist, mx, my };
-      return;
-    }
-    if (drag.current) {
-      const b = toPhoto(local(e));
-      onRect(rectFrom({ x: drag.current.ax, y: drag.current.ay }, b));
-    }
-  };
-
-  const onUp = (e: React.PointerEvent) => {
-    pointers.current.delete(e.pointerId);
-    if (pointers.current.size < 2) pinch.current = null;
-    if (pointers.current.size === 0) {
-      drag.current = null;
-      // 小さすぎる範囲は取り消す
-      if (rect && (rect.w * view.scale < 20 || rect.h * view.scale < 8)) onRect(null);
-    }
-  };
-
-  return (
-    <div ref={boxRef} className="crop-area" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
-      <canvas ref={canvasRef} />
-    </div>
   );
 }

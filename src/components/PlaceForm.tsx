@@ -1,11 +1,13 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useState } from 'react';
 import { mapCategoryToDimension } from '../lib/categories';
-import { autoName, db, newId, savePlace } from '../lib/db';
+import { PhotoLimitError, autoName, db, deletePlace, isQuotaError, newId, savePlace, type PhotoData } from '../lib/db';
+import { useBlobUrl } from '../lib/useBlobUrl';
 import { GROUP_LABELS, CATEGORY_GROUPS, DIMENSION_LABELS, type Category, type Dimension, type Place } from '../lib/types';
 import { CoordFields, EMPTY_DRAFT, coordsToDraft, draftToCoords, type CoordDraft } from './CoordInput';
 import { DimensionPicker } from './DimensionPicker';
 import { PhotoButton } from './PhotoReader';
+import { PlaceImagePicker } from './PlaceImagePicker';
 import { Sheet } from './Sheet';
 
 export interface PlaceFormInit {
@@ -27,7 +29,8 @@ interface PlaceFormProps {
 
 export function PlaceForm({ init, worldId, dimension, categories, onClose, onSaved }: PlaceFormProps) {
   const editing = init.place;
-  const [dim, setDim] = useState<Dimension>(editing?.dimension ?? dimension);  const [draft, setDraft] = useState<CoordDraft>(editing ? coordsToDraft(editing) : (init.draft ?? EMPTY_DRAFT));
+  const [dim, setDim] = useState<Dimension>(editing?.dimension ?? dimension);
+  const [draft, setDraft] = useState<CoordDraft>(editing ? coordsToDraft(editing) : (init.draft ?? EMPTY_DRAFT));
   const [categoryId, setCategoryId] = useState(editing?.categoryId ?? init.categoryId ?? '');
   const [name, setName] = useState(editing?.name ?? '');
   const [memo, setMemo] = useState(editing?.memo ?? '');
@@ -36,6 +39,11 @@ export function PlaceForm({ init, worldId, dimension, categories, onClose, onSav
   const [errors, setErrors] = useState<string[]>([]);
   const [invalid, setInvalid] = useState<(keyof CoordDraft)[]>([]);
   const [saving, setSaving] = useState(false);
+  // 画像: undefined＝変えない、null＝外す、データ＝付ける・差し替える（保存ボタンまで画面内だけに持つ）
+  const [photoChange, setPhotoChange] = useState<PhotoData | null | undefined>(undefined);
+  const savedPhoto = useLiveQuery(() => (editing ? db.photos.where('placeId').equals(editing.id).first() : undefined), [editing?.id]);
+  const shownThumb = photoChange === undefined ? savedPhoto?.thumb : (photoChange?.thumb ?? null);
+  const thumbUrl = useBlobUrl(shownThumb);
 
   const dimCategories = categories.filter((c) => c.dimension === dim && (!c.hidden || c.id === categoryId));
   const selected = categories.find((c) => c.id === categoryId && c.dimension === dim);
@@ -72,31 +80,44 @@ export function PlaceForm({ init, worldId, dimension, categories, onClose, onSav
     try {
       const now = Date.now();
       const finalName = name.trim() || (editing && editing.categoryId === selected.id ? editing.name : await autoName(worldId, selected));
-      await savePlace({
-        id: editing?.id ?? newId(),
-        worldId,
-        dimension: dim,
-        categoryId: selected.id,
-        name: finalName.slice(0, 100),
-        ...coords,
-        memo: memo.slice(0, 2000),
-        visited: !wantToGo,
-        isHome,
-        createdAt: editing?.createdAt ?? now,
-        updatedAt: now,
-      });
+      await savePlace(
+        {
+          id: editing?.id ?? newId(),
+          worldId,
+          dimension: dim,
+          categoryId: selected.id,
+          name: finalName.slice(0, 100),
+          ...coords,
+          memo: memo.slice(0, 2000),
+          visited: !wantToGo,
+          isHome,
+          createdAt: editing?.createdAt ?? now,
+          updatedAt: now,
+        },
+        db,
+        photoChange,
+      );
       const moved = editing ? editing.dimension !== dim : dim !== dimension;
       const where = moved ? `${DIMENSION_LABELS[dim]}に` : '';
       onSaved(editing ? (moved ? `${where}移しました` : '更新しました') : `「${finalName}」を${where}記録しました`);
-    } catch {
-      setErrors(['保存できませんでした。もう一度試してください']);
+    } catch (e) {
+      // 失敗したときは地点も画像も変わっていない（同じトランザクション）
+      const quota = isQuotaError(e);
+      setErrors([
+        e instanceof PhotoLimitError
+          ? `${e.message}。ほかの地点の画像を外すか、画像を付けずに保存してください`
+          : quota
+            ? 'iPhone の空き容量が足りないため保存できませんでした'
+            : '保存できませんでした。もう一度試してください',
+      ]);
       setSaving(false);
+      document.querySelector('.sheet-body')?.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
   const remove = async () => {
     if (!editing || !window.confirm(`「${editing.name}」を削除しますか？`)) return;
-    await db.places.delete(editing.id);
+    await deletePlace(editing.id);
     onSaved('削除しました');
   };
 
@@ -128,13 +149,30 @@ export function PlaceForm({ init, worldId, dimension, categories, onClose, onSav
         <h3>座標</h3>
         <PhotoButton
           dimension={dim}
-          onResult={(coords, d) => {
+          allowAttach
+          onResult={(coords, d, photo) => {
             setDraft(coordsToDraft(coords));
             setInvalid([]);
             changeDimension(d);
+            if (photo) setPhotoChange(photo);
           }}
         />
         <CoordFields draft={draft} onChange={setDraft} invalid={invalid} />
+      </section>
+
+      <section className="form-section">
+        <h3>画像</h3>
+        <div className="image-field">
+          {thumbUrl ? <img className="image-thumb" src={thumbUrl} alt="地点の画像" /> : <span className="muted">なし</span>}
+          <div className="row">
+            <PlaceImagePicker label={shownThumb ? '変える' : '📷 画像を付ける'} onPicked={setPhotoChange} />
+            {shownThumb && (
+              <button type="button" className="chip" onClick={() => setPhotoChange(null)}>
+                外す
+              </button>
+            )}
+          </div>
+        </div>
       </section>
 
       <section className="form-section">

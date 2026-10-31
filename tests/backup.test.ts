@@ -112,7 +112,9 @@ describe('バックアップ', () => {
     const w = (await d.worlds.toArray())[0].id;
     await savePlace(place(w), d);
     const before = await snapshot();
-    const data = await buildBackup(d);
+    const parsed = parseBackupText(JSON.stringify(await buildBackup(d)));
+    if (!parsed.ok) throw new Error('invalid');
+    const data = parsed.data;
     data.places = [{ ...data.places[0], id: 'new' }];
     const spy = vi.spyOn(d.places, 'bulkAdd').mockRejectedValueOnce(new Error('boom'));
     await expect(replaceAll(data, d)).rejects.toThrow('boom');

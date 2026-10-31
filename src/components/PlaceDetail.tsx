@@ -1,4 +1,7 @@
-import { db, savePlace, setHome } from '../lib/db';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { useState } from 'react';
+import { db, deletePlace, savePlace, setHome } from '../lib/db';
+import { useBlobUrl } from '../lib/useBlobUrl';
 import { copyText } from '../lib/device';
 import { convertDimension, formatCoords, formatDistance, routeTo } from '../lib/geo';
 import { DIMENSION_LABELS, type Category, type Coords, type Place } from '../lib/types';
@@ -17,12 +20,15 @@ interface PlaceDetailProps {
 
 export function PlaceDetail({ place, category, home, here, onClose, onEdit, toast }: PlaceDetailProps) {
   const converted = convertDimension(place, place.dimension);
+  const photo = useLiveQuery(() => db.photos.where('placeId').equals(place.id).first(), [place.id]);
+  const photoUrl = useBlobUrl(photo?.full);
+  const [zoom, setZoom] = useState(false);
   const fromHome = home && home.id !== place.id ? routeTo(home, place) : null;
   const fromHere = here ? routeTo(here, place) : null;
 
   const remove = async () => {
     if (!window.confirm(`「${place.name}」を削除しますか？`)) return;
-    await db.places.delete(place.id);
+    await deletePlace(place.id);
     toast('削除しました');
     onClose();
   };
@@ -37,6 +43,17 @@ export function PlaceDetail({ place, category, home, here, onClose, onEdit, toas
         </button>
       }
     >
+      {photoUrl && (
+        <button type="button" className="detail-photo" onClick={() => setZoom(true)} aria-label="画像を大きく表示">
+          <img src={photoUrl} alt="地点の画像" />
+        </button>
+      )}
+      {zoom && photoUrl && (
+        <div className="photo-zoom" role="dialog" aria-label="地点の画像" onClick={() => setZoom(false)}>
+          <img src={photoUrl} alt="地点の画像" />
+          <span className="photo-zoom-hint">タップで閉じる・2 本指で拡大</span>
+        </div>
+      )}
       <div className="detail-head">
         <span className="detail-icon">{category?.icon ?? '❓'}</span>
         <div>

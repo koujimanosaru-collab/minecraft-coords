@@ -12,7 +12,7 @@ import { PlaceList } from './components/PlaceList';
 import { Settings } from './components/Settings';
 import { WorldSheet } from './components/WorldSheet';
 import { HOME_CATEGORY_ID } from './lib/categories';
-import { db, ensureSeed, getMeta } from './lib/db';
+import { SELFTEST, db, ensureSeed, getMeta } from './lib/db';
 import { hereKey as makeHereKey, setHere } from './lib/here';
 import { isStandalone, requestPersist, type PersistState } from './lib/device';
 import { DEFAULT_FILTER, SORT_LABELS, filterAndSort, type PlaceFilter, type SortKey } from './lib/places';
@@ -93,6 +93,11 @@ export default function App() {
   useEffect(() => savePref('view', view), [view]);
   useEffect(() => savePref('mapMode', mapMode), [mapMode]);
 
+  // 一覧用の小さい画像（Blob は IndexedDB からの参照なので、地点の数だけ読んでも重くない）
+  const thumbs = useLiveQuery(async () => {
+    const ps = await db.photos.toArray();
+    return new Map(ps.map((p) => [p.placeId, p.thumb]));
+  }, []);
   const places = useLiveQuery(
     () => db.places.where('[worldId+dimension]').equals([activeWorldId, dimension]).toArray(),
     [activeWorldId, dimension],
@@ -126,6 +131,7 @@ export default function App() {
 
   return (
     <div className={`app dim-${dimension}`}>
+      {SELFTEST && <div className="selftest-banner">試験モード（本番のデータとは別の保存先です）</div>}
       <header className="top">
         <HomeCard
           home={home}
@@ -196,6 +202,7 @@ export default function App() {
             categoryMap={categoryMap}
             home={home}
             filtered={filtered}
+            thumbs={thumbs ?? new Map()}
             onSelect={(p) => setSheet({ type: 'detail', id: p.id })}
           />
         ) : (

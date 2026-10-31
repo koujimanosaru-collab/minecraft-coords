@@ -447,3 +447,17 @@ textarea.text-input { resize: vertical; }
 .home-warn { margin: 0; font-size: 13px; color: var(--danger); }
 
 .empty-disclaimer { display: block; margin-top: 24px; font-size: 12px; }
+
+/* ---- 地点の画像 ---- */
+.image-field { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.image-thumb { width: 96px; height: 72px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); }
+.place-icon.with-thumb { position: relative; width: 48px; height: 40px; }
+.place-icon.with-thumb img { width: 48px; height: 40px; object-fit: cover; border-radius: 8px; display: block; }
+.place-icon-badge { position: absolute; right: -6px; bottom: -6px; font-size: 16px; line-height: 1; background: var(--surface); border-radius: 50%; padding: 2px; }
+.detail-photo { display: block; width: 100%; padding: 0; border: none; background: none; margin-bottom: 12px; }
+.detail-photo img { width: 100%; max-height: 40vh; object-fit: cover; border-radius: 12px; display: block; }
+.photo-zoom { position: fixed; inset: 0; z-index: 30; background: rgba(0, 0, 0, 0.92); display: flex; align-items: center; justify-content: center; touch-action: pinch-zoom; }
+.photo-zoom img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.photo-zoom-hint { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 16px); color: #ddd; font-size: 13px; }
+.selftest-banner { background: #d39b00; color: #000; text-align: center; font-size: 13px; font-weight: 700; padding: calc(env(safe-area-inset-top) + 4px) 8px 4px; }
+.selftest-banner + .top { padding-top: 8px; }

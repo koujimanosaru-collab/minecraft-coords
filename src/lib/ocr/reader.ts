@@ -5,10 +5,9 @@
 import type { Worker } from 'tesseract.js';
 import type { Coords } from '../types';
 import { coordSymbolConfidence, decideCoords } from './parse';
+import { releaseCanvas } from '../image-input';
 import { WORK_WIDTH, preprocess, type Mask } from './preprocess';
 
-/** 写真を保持する長辺の上限（メモリ対策） */
-export const MAX_PHOTO_SIDE = 2400;
 /** 囲んだ範囲の縦÷横の上限。座標は横長の 1 行なので、これより縦長なら囲み直してもらう（処理する画素数の上限も兼ねる） */
 export const MAX_RECT_ASPECT = 0.5;
 /** 初期化の待ち時間の上限 */
@@ -23,7 +22,7 @@ export interface Rect {
 
 export class ReadError extends Error {
   constructor(
-    public kind: 'decode' | 'offline' | 'init' | 'recognize' | 'shape' | 'cancelled',
+    public kind: 'offline' | 'init' | 'recognize' | 'shape' | 'cancelled',
     message: string = kind,
   ) {
     super(message);
@@ -131,36 +130,6 @@ function endSession(session: Session) {
 /** worker を終了してメモリを返す（準備中・読み取り中なら打ち切られる） */
 export function terminateWorker(): void {
   if (current) endSession(current);
-}
-
-/** 写真ファイルを、向きを補正したうえで長辺 MAX_PHOTO_SIDE 以下の canvas にする */
-export async function loadPhoto(file: File): Promise<HTMLCanvasElement> {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = new Image();
-    img.src = url;
-    await img.decode(); // img 要素は EXIF の向きを反映して描画される
-    const scale = Math.min(1, MAX_PHOTO_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(img.naturalWidth * scale);
-    canvas.height = Math.round(img.naturalHeight * scale);
-    const g = canvas.getContext('2d')!;
-    g.imageSmoothingQuality = 'high';
-    g.drawImage(img, 0, 0, canvas.width, canvas.height);
-    return canvas;
-  } catch (e) {
-    throw new ReadError('decode', String(e));
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
-/** canvas を解放する（iOS は canvas のメモリ上限が厳しい） */
-export function releaseCanvas(c: HTMLCanvasElement | null | undefined) {
-  if (c) {
-    c.width = 0;
-    c.height = 0;
-  }
 }
 
 /** 文字行のマスクを PNG にする（canvas はすぐ解放する） */

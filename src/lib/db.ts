@@ -7,11 +7,60 @@ export interface Meta {
   value: unknown;
 }
 
+/** 地点の画像（1 地点 1 枚）。full・thumb は JPEG。width・height は full の寸法 */
+export interface Photo {
+  id: string;
+  placeId: string;
+  full: Blob;
+  thumb: Blob;
+  width: number;
+  height: number;
+  /** full と thumb のバイト数の合計 */
+  bytes: number;
+  createdAt: number;
+}
+
+/** 新しく付ける画像の中身（保存前） */
+export type PhotoData = Pick<Photo, 'full' | 'thumb' | 'width' | 'height'>;
+
+/** 画像は全体で 100 枚まで（バックアップが 100MB に収まるように） */
+export const MAX_PHOTOS = 100;
+
+/**
+ * 容量不足のエラーか。Dexie は IndexedDB のエラーを独自のエラーで包む（inner）ことがあり、
+ * まとめて追加したときは BulkError の failures に入ることもあるので、中までたどる
+ */
+export function isQuotaError(e: unknown, depth = 0): boolean {
+  if (!e || typeof e !== 'object' || depth > 5) return false;
+  const err = e as { name?: string; inner?: unknown; failures?: unknown[]; failuresByPos?: Record<string, unknown> };
+  if (err.name === 'QuotaExceededError') return true;
+  if (isQuotaError(err.inner, depth + 1)) return true;
+  const failures = [...(err.failures ?? []), ...Object.values(err.failuresByPos ?? {})];
+  return failures.some((f) => isQuotaError(f, depth + 1));
+}
+
+export class PhotoLimitError extends Error {
+  constructor() {
+    super(`画像は ${MAX_PHOTOS} 枚までです`);
+  }
+}
+
+/**
+ * 使う DB の名前。URL に ?selftest=1 があれば試験用の DB を使う（本番のデータに触れないため）。
+ * 起動時に 1 度だけ決める
+ */
+export function dbNameFor(search: string): string {
+  return new URLSearchParams(search).get('selftest') === '1' ? 'minecraft-coords-selftest' : 'minecraft-coords';
+}
+export const DB_NAME = dbNameFor(typeof location === 'undefined' ? '' : location.search);
+export const SELFTEST = DB_NAME !== 'minecraft-coords';
+
 export class CoordsDB extends Dexie {
   worlds!: EntityTable<World, 'id'>;
   categories!: EntityTable<Category, 'id'>;
   places!: EntityTable<Place, 'id'>;
   meta!: EntityTable<Meta, 'key'>;
+  photos!: EntityTable<Photo, 'id'>;
 
   constructor(name = 'minecraft-coords') {
     super(name);
@@ -21,10 +70,14 @@ export class CoordsDB extends Dexie {
       places: 'id, worldId, [worldId+dimension], categoryId',
       meta: 'key',
     });
+    // 画像のテーブルを追加（Blob はインデックスに含めない）。既存のテーブルはそのまま
+    this.version(2).stores({
+      photos: 'id, placeId',
+    });
   }
 }
 
-export const db = new CoordsDB();
+export const db = new CoordsDB(DB_NAME);
 
 export function newId(): string {
   return crypto.randomUUID();
@@ -50,10 +103,35 @@ export async function addWorld(name: string, d: CoordsDB = db): Promise<string> 
 }
 
 export async function deleteWorld(id: string, d: CoordsDB = db): Promise<void> {
-  await d.transaction('rw', d.worlds, d.places, async () => {
+  await d.transaction('rw', d.worlds, d.places, d.photos, async () => {
+    const placeIds = (await d.places.where('worldId').equals(id).primaryKeys()) as string[];
+    await d.photos.where('placeId').anyOf(placeIds).delete();
     await d.places.where('worldId').equals(id).delete();
     await d.worlds.delete(id);
   });
+}
+
+/** 地点を削除する（画像も一緒に） */
+export async function deletePlace(id: string, d: CoordsDB = db): Promise<void> {
+  await d.transaction('rw', d.places, d.photos, async () => {
+    await d.photos.where('placeId').equals(id).delete();
+    await d.places.delete(id);
+  });
+}
+
+export async function deleteAllPhotos(d: CoordsDB = db): Promise<void> {
+  await d.photos.clear();
+}
+
+/** 画像の枚数と合計バイト数 */
+export async function photoStats(d: CoordsDB = db): Promise<{ count: number; bytes: number }> {
+  let bytes = 0;
+  let count = 0;
+  await d.photos.each((p) => {
+    count++;
+    bytes += p.bytes;
+  });
+  return { count, bytes };
 }
 
 /** 名前が空のとき「カテゴリ名 #連番」を付ける */
@@ -67,13 +145,30 @@ export async function autoName(worldId: string, category: Category, d: CoordsDB 
   return `${prefix}${Math.max(max, same.length) + 1}`;
 }
 
-/** 地点を保存。拠点にした場合は同じワールド×ディメンションの他の拠点を外す */
-export async function savePlace(place: Place, d: CoordsDB = db): Promise<void> {
-  await d.transaction('rw', d.places, async () => {
+/**
+ * 地点を保存。拠点にした場合は同じワールド×ディメンションの他の拠点を外す。
+ * photo: 省略＝画像は変えない、null＝外す、データ＝付ける・差し替える（地点と同じトランザクション）。
+ * 失敗したら地点も画像も変わらない
+ */
+export async function savePlace(place: Place, d: CoordsDB = db, photo?: PhotoData | null): Promise<void> {
+  await d.transaction('rw', d.places, d.photos, async () => {
     if (place.isHome) {
       await clearHome(place.worldId, place.dimension, place.id, d);
     }
     await d.places.put({ ...place, updatedAt: Date.now() });
+    if (photo === undefined) return;
+    const existing = await d.photos.where('placeId').equals(place.id).count();
+    if (photo && existing === 0 && (await d.photos.count()) >= MAX_PHOTOS) throw new PhotoLimitError();
+    await d.photos.where('placeId').equals(place.id).delete();
+    if (photo) {
+      await d.photos.add({
+        id: newId(),
+        placeId: place.id,
+        ...photo,
+        bytes: photo.full.size + photo.thumb.size,
+        createdAt: Date.now(),
+      });
+    }
   });
 }
 

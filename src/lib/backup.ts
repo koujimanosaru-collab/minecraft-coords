@@ -1,4 +1,6 @@
-import { db, type CoordsDB } from './db';
+import { MAX_PHOTOS, db, newId, type CoordsDB } from './db';
+import { decodeBase64, encodeBase64, isCompleteJpeg, jpegSize } from './image-header';
+import { FULL_MAX_BYTES, FULL_SIDE, THUMB_MAX_BYTES, THUMB_SIDE } from './photo-limits';
 import {
   CATEGORY_GROUPS,
   COORD_LIMIT,
@@ -9,26 +11,85 @@ import {
 } from './types';
 
 export const BACKUP_APP = 'minecraft-coords';
-export const SCHEMA_VERSION = 1;
+/** 2: 画像（photos）を含められる形式。1 も復元できる */
+export const SCHEMA_VERSION = 2;
+/** バックアップのファイルの上限（書き出し・復元とも） */
+export const BACKUP_MAX_BYTES = 100 * 1024 * 1024;
+
+export interface BackupPhoto {
+  id: string;
+  placeId: string;
+  mime: 'image/jpeg';
+  /** full の寸法 */
+  width: number;
+  height: number;
+  full: string; // base64
+  thumb: string; // base64
+}
 
 export interface BackupData {
   app: typeof BACKUP_APP;
-  schemaVersion: typeof SCHEMA_VERSION;
+  schemaVersion: 1 | 2;
   exportedAt: string;
   worlds: World[];
   categories: Category[];
   places: Place[];
+  photos?: BackupPhoto[];
 }
 
-export async function buildBackup(d: CoordsDB = db): Promise<BackupData> {
-  return d.transaction('r', d.worlds, d.categories, d.places, async () => ({
-    app: BACKUP_APP,
-    schemaVersion: SCHEMA_VERSION,
-    exportedAt: new Date().toISOString(),
+/** 検証済みの復元データ（画像はバイト列にしてある） */
+export interface RestorePhoto {
+  id: string;
+  placeId: string;
+  width: number;
+  height: number;
+  thumbWidth: number;
+  thumbHeight: number;
+  full: Uint8Array;
+  thumb: Uint8Array;
+}
+export interface RestoreData {
+  worlds: World[];
+  categories: Category[];
+  places: Place[];
+  photos: RestorePhoto[];
+}
+
+export async function buildBackup(d: CoordsDB = db, opts: { includePhotos?: boolean } = {}): Promise<BackupData> {
+  const data = await d.transaction('r', d.worlds, d.categories, d.places, d.photos, async () => ({
     worlds: await d.worlds.toArray(),
     categories: await d.categories.toArray(),
     places: await d.places.toArray(),
+    photos: opts.includePhotos ? await d.photos.toArray() : [],
   }));
+  const backup: BackupData = {
+    app: BACKUP_APP,
+    schemaVersion: SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    worlds: data.worlds,
+    categories: data.categories,
+    places: data.places,
+  };
+  if (opts.includePhotos) {
+    backup.photos = [];
+    for (const p of data.photos) {
+      backup.photos.push({
+        id: p.id,
+        placeId: p.placeId,
+        mime: 'image/jpeg',
+        width: p.width,
+        height: p.height,
+        full: encodeBase64(new Uint8Array(await p.full.arrayBuffer())),
+        thumb: encodeBase64(new Uint8Array(await p.thumb.arrayBuffer())),
+      });
+    }
+  }
+  return backup;
+}
+
+/** 画像を含めたときのファイルの大きさの見込み（base64 で約 4/3 倍） */
+export function estimateBackupBytes(photoBytes: number, placeCount: number): number {
+  return Math.ceil((photoBytes * 4) / 3) + placeCount * 400 + 20_000;
 }
 
 export function backupFileName(date = new Date()): string {
@@ -36,7 +97,7 @@ export function backupFileName(date = new Date()): string {
   return `minecraft-coords-${date.getFullYear()}${p(date.getMonth() + 1)}${p(date.getDate())}-${p(date.getHours())}${p(date.getMinutes())}.json`;
 }
 
-export type ValidationResult = { ok: true; data: BackupData } | { ok: false; errors: string[] };
+export type ValidationResult = { ok: true; data: RestoreData } | { ok: false; errors: string[] };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isStr = (v: unknown, max = 500): v is string => typeof v === 'string' && v.length <= max;
@@ -52,7 +113,7 @@ export function validateBackup(input: unknown): ValidationResult {
   if (!isObj(input) || input.app !== BACKUP_APP) {
     return { ok: false, errors: ['このアプリのバックアップファイルではありません'] };
   }
-  if (input.schemaVersion !== SCHEMA_VERSION) {
+  if (input.schemaVersion !== 1 && input.schemaVersion !== 2) {
     return { ok: false, errors: [`対応していない形式です（schemaVersion: ${String(input.schemaVersion)}）`] };
   }
   const { worlds, categories, places } = input;
@@ -128,6 +189,8 @@ export function validateBackup(input: unknown): ValidationResult {
     }
   });
 
+  const photos = validatePhotos(input.schemaVersion === 2 ? input.photos : undefined, placeIds, errors);
+
   if (errors.length > 0) return { ok: false, errors };
   // 既知の項目だけを取り出す（余分な項目は保存しない）
   const pick = <T,>(o: unknown, keys: (keyof T)[]) =>
@@ -135,9 +198,7 @@ export function validateBackup(input: unknown): ValidationResult {
   return {
     ok: true,
     data: {
-      app: BACKUP_APP,
-      schemaVersion: SCHEMA_VERSION,
-      exportedAt: isStr(input.exportedAt, 100) ? input.exportedAt : '',
+      photos,
       worlds: worlds.map((w) => pick<World>(w, ['id', 'name', 'sortOrder', 'createdAt'])),
       categories: categories.map((c) =>
         pick<Category>(c, ['id', 'dimension', 'group', 'name', 'icon', 'hidden', 'sortOrder', 'builtin']),
@@ -149,15 +210,90 @@ export function validateBackup(input: unknown): ValidationResult {
   };
 }
 
-/** 検証済みデータで全置換する。途中で失敗したらトランザクションごと取り消され、既存データは残る */
-export async function replaceAll(data: BackupData, d: CoordsDB = db): Promise<void> {
-  await d.transaction('rw', d.worlds, d.categories, d.places, async () => {
+/**
+ * photos の検証（v2）。中身が本当に JPEG か、寸法・大きさが上限内か、申告の寸法と一致するかを、
+ * デコードせずにバイト列から確かめる（デコードしての確認は画面側で 1 枚ずつ行う）
+ */
+function validatePhotos(raw: unknown, placeIds: Set<string>, errors: string[]): RestorePhoto[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) {
+    errors.push('画像（photos）の形式が正しくありません');
+    return [];
+  }
+  if (raw.length > MAX_PHOTOS) errors.push(`画像が ${MAX_PHOTOS} 枚を超えています`);
+  if (raw.length > placeIds.size) errors.push('画像が地点の数より多くあります');
+  const out: RestorePhoto[] = [];
+  const ids = new Set<string>();
+  const owners = new Set<string>();
+  raw.forEach((p, i) => {
+    const label = `画像 ${i + 1} 件目`;
+    if (
+      !isObj(p) ||
+      !isNonEmptyStr(p.id, 100) ||
+      !isNonEmptyStr(p.placeId, 100) ||
+      p.mime !== 'image/jpeg' ||
+      !isInt(p.width) ||
+      !isInt(p.height) ||
+      typeof p.full !== 'string' ||
+      typeof p.thumb !== 'string'
+    ) {
+      errors.push(`${label}の形式が正しくありません`);
+      return;
+    }
+    if (ids.has(p.id)) errors.push(`画像の ID が重複しています（${p.id}）`);
+    ids.add(p.id);
+    if (!placeIds.has(p.placeId)) errors.push(`${label}の地点が見つかりません`);
+    if (owners.has(p.placeId)) errors.push(`${label}: 1 つの地点に画像が 2 枚あります`);
+    owners.add(p.placeId);
+    const full = decodeBase64(p.full);
+    const thumb = decodeBase64(p.thumb);
+    if (!full || !thumb) {
+      errors.push(`${label}のデータが壊れています`);
+      return;
+    }
+    if (full.length > FULL_MAX_BYTES || thumb.length > THUMB_MAX_BYTES) {
+      errors.push(`${label}が大きすぎます`);
+      return;
+    }
+    const fs = isCompleteJpeg(full) ? jpegSize(full) : null;
+    const ts = isCompleteJpeg(thumb) ? jpegSize(thumb) : null;
+    if (!fs || !ts) {
+      errors.push(`${label}は JPEG 画像ではありません`);
+      return;
+    }
+    if (fs.width !== p.width || fs.height !== p.height || Math.max(fs.width, fs.height) > FULL_SIDE) {
+      errors.push(`${label}の寸法が正しくありません`);
+      return;
+    }
+    if (Math.max(ts.width, ts.height) > THUMB_SIDE) {
+      errors.push(`${label}の小さい画像の寸法が正しくありません`);
+      return;
+    }
+    out.push({ id: p.id, placeId: p.placeId, width: fs.width, height: fs.height, thumbWidth: ts.width, thumbHeight: ts.height, full, thumb });
+  });
+  return out;
+}
+
+/**
+ * 検証済みデータで全置換する（ワールド・カテゴリ・地点・画像）。画像を含まないバックアップから戻すと、今ある画像も消える。
+ * 途中で失敗したらトランザクションごと取り消され、既存データは残る
+ */
+export async function replaceAll(data: RestoreData, d: CoordsDB = db): Promise<void> {
+  const now = Date.now();
+  const photos = data.photos.map((p) => {
+    const full = new Blob([p.full as BlobPart], { type: 'image/jpeg' });
+    const thumb = new Blob([p.thumb as BlobPart], { type: 'image/jpeg' });
+    return { id: p.id || newId(), placeId: p.placeId, full, thumb, width: p.width, height: p.height, bytes: full.size + thumb.size, createdAt: now };
+  });
+  await d.transaction('rw', d.worlds, d.categories, d.places, d.photos, async () => {
+    await d.photos.clear();
     await d.places.clear();
     await d.categories.clear();
     await d.worlds.clear();
     await d.worlds.bulkAdd(data.worlds);
     await d.categories.bulkAdd(data.categories);
     await d.places.bulkAdd(data.places);
+    await d.photos.bulkAdd(photos);
   });
 }
 
