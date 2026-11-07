@@ -30,6 +30,8 @@ const NAME_W = 128; // 名前札の表示サイズ
 const NAME_H = 20;
 const NAME_GAP = 22; // アイコン中心から名前札の上端まで
 const TEX_SCALE = 2; // canvas は表示サイズの 2 倍（アイコン 96×96、名前 256×40）
+const Y_SCALES = [1, 5, 10, 20]; // 高さ倍率の選択肢（ボタンで巡回）
+const DEFAULT_Y_SCALE = 10;
 const COLORS = { home: '#3f7d34', want: '#d39b00', normal: '#9aa093' };
 
 type Status = 'ok' | 'unsupported' | 'lost';
@@ -123,7 +125,7 @@ export default function MapView3D({ places, categoryMap, home, here, onSelect, o
   const boxRef = useRef<HTMLDivElement>(null);
   const ctxRef = useRef<SceneCtx | null>(null);
   const [status, setStatus] = useState<Status>('ok');
-  const [yScale, setYScale] = useState(1);
+  const [yScale, setYScale] = useState(DEFAULT_Y_SCALE);
   const [topView, setTopView] = useState(false);
   const fitRef = useRef<(top: boolean) => void>(() => {});
   const homeTargetRef = useRef<Vec3 | null>(null);
@@ -498,9 +500,9 @@ export default function MapView3D({ places, categoryMap, home, here, onSelect, o
           type="button"
           className={`chip small${yScale > 1 ? ' active' : ''}`}
           aria-pressed={yScale > 1}
-          onClick={() => setYScale(yScale > 1 ? 1 : 5)}
+          onClick={() => setYScale(Y_SCALES[(Y_SCALES.indexOf(yScale) + 1) % Y_SCALES.length])}
         >
-          高さ ×{yScale > 1 ? 5 : 1}
+          高さ ×{yScale}
         </button>
         <button
           type="button"
